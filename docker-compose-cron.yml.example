@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  webpage-monitor-cron:
+    build: 
+      context: .
+      dockerfile: Dockerfile.cron
+    container_name: webpage-monitor-cron
+    environment:
+      # ⚠️ 請修改以下帳號密碼
+      - WEB_USERNAME=your_username_here
+      - WEB_PASSWORD=your_password_here
+      - WEB_URL=https://www.cs.ccu.edu.tw/~damon/secure/course-wk.html
+      # 可選：Line Notify Token（從 https://notify-bot.line.me/ 取得）
+      # - LINE_NOTIFY_TOKEN=your_line_notify_token_here
+      # Cron 排程設定（預設每天早上 9:00）
+      - CRON_SCHEDULE=0 9 * * *
+    volumes:
+      # 將資料持久化到本機
+      - ./data:/data
+      # 將日誌持久化
+      - ./logs:/var/log
+    restart: unless-stopped
