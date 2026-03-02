@@ -1,8 +1,136 @@
 # 網頁更新監控爬蟲 - Docker 版本
 
-自動監控網頁更新的 Docker 化爬蟲系統。
+自動監控網頁更新的 Docker 化爬蟲系統，支援 Email 和 Line 通知。
 
-## 快速開始
+## ✨ 功能特色
+
+- ✅ 自動登入並監控網頁更新
+- ✅ 使用 Docker 容器化部署
+- ✅ **支援 Email 通知**（推薦，附 HTML 格式）
+- ✅ 支援 Line Notify 通知（備選）
+- ✅ 自動儲存網頁快照
+- ✅ Cron 定時執行
+- ✅ 系統重啟後自動恢復
+
+## 📧 通知方式
+
+### Email 通知（推薦）
+- 簡單易用，不需要額外註冊服務
+- 支援 Gmail、Yahoo、Outlook 等
+- 美觀的 HTML 格式通知
+- 📖 **詳細設定請參考 [EMAIL_SETUP.md](EMAIL_SETUP.md)**
+
+### Line Notify（備選）
+- 即時推播到 Line
+- 需要取得 Line Notify Token
+- 作為 Email 的備援方案
+
+---
+
+## 🚀 快速開始
+
+### 前置需求
+
+- Docker 和 Docker Compose
+- Gmail 帳號（用於接收通知）或 Line 帳號
+
+### 步驟 1：測試 Email 設定（可選但推薦）
+
+```bash
+# 執行測試腳本
+python test_email.py
+```
+
+按照提示輸入 Gmail 資訊，如果收到測試郵件就表示設定正確。
+
+**📖 不知道如何取得 Gmail 應用程式密碼？** 請參考 [EMAIL_SETUP.md](EMAIL_SETUP.md)
+
+### 步驟 2：設定環境變數
+
+```bash
+# 複製範本檔案
+cp docker-compose-cron.yml.example docker-compose-cron.yml
+
+# 編輯設定檔
+nano docker-compose-cron.yml
+```
+
+填入你的資訊：
+```yaml
+environment:
+  # 網站登入資訊
+  - WEB_USERNAME=your_username
+  - WEB_PASSWORD=your_password
+  
+  # Email 通知（推薦）
+  - EMAIL_SENDER=your_email@gmail.com
+  - EMAIL_RECEIVER=your_email@gmail.com
+  - EMAIL_PASSWORD=your_gmail_app_password
+  - SMTP_SERVER=smtp.gmail.com
+  - SMTP_PORT=587
+  
+  # 或使用 Line Notify（備選）
+  # - LINE_NOTIFY_TOKEN=your_line_token
+  
+  # Cron 排程（預設每天早上 9:00）
+  - CRON_SCHEDULE=0 9 * * *
+```
+
+### 步驟 3：啟動服務
+
+```bash
+docker-compose -f docker-compose-cron.yml up -d --build
+```
+
+### 步驟 4：查看日誌
+
+```bash
+# 即時查看日誌
+docker-compose -f docker-compose-cron.yml logs -f
+
+# 或只看最後 50 行
+docker-compose -f docker-compose-cron.yml logs --tail=50
+```
+
+---
+
+---
+
+## ⚙️ 常用操作
+
+### 停止服務
+```bash
+docker-compose -f docker-compose-cron.yml down
+```
+
+### 重新啟動
+```bash
+docker-compose -f docker-compose-cron.yml restart
+```
+
+### 手動執行一次檢查
+```bash
+docker-compose -f docker-compose-cron.yml exec webpage-monitor-cron python /app/webpage_monitor.py
+```
+
+### 查看儲存的資料
+
+```bash
+# 查看哈希記錄
+cat data/page_hash.json
+
+# 查看網頁快照
+ls -lh data/page_snapshot_*.html
+```
+
+### 查看容器狀態
+```bash
+docker-compose -f docker-compose-cron.yml ps
+```
+
+---
+
+## 📅 Cron 排程格式
 
 ### 方法一：單次執行（手動觸發）
 

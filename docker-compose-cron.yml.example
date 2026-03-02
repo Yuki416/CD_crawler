@@ -11,8 +11,24 @@ services:
       - WEB_USERNAME=your_username_here
       - WEB_PASSWORD=your_password_here
       - WEB_URL=https://www.cs.ccu.edu.tw/~damon/secure/course-wk.html
-      # 可選：Line Notify Token（從 https://notify-bot.line.me/ 取得）
+      
+      # === Email 通知設定（推薦）===
+      # Gmail 範例：
+      - EMAIL_SENDER=your_email@gmail.com
+      - EMAIL_RECEIVER=your_email@gmail.com
+      - EMAIL_PASSWORD=your_app_password_here
+      - SMTP_SERVER=smtp.gmail.com
+      - SMTP_PORT=587
+      
+      # 其他信箱範例：
+      # Yahoo: smtp.mail.yahoo.com:587
+      # Outlook: smtp-mail.outlook.com:587
+      
+      # === Line Notify（備選，可選）===
+      # 如果不想用 Email，可以用 Line Notify
+      # 從 https://notify-bot.line.me/ 取得 Token
       # - LINE_NOTIFY_TOKEN=your_line_notify_token_here
+      
       # Cron 排程設定（預設每天早上 9:00）
       - CRON_SCHEDULE=0 9 * * *
     volumes:

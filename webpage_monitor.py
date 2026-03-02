@@ -72,11 +72,70 @@ class WebsiteMonitor:
             f.write(content)
         print(f"已儲存網頁快照: {filename}")
     
+    def send_email_notification(self, subject, body):
+        """發送 Email 通知"""
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        
+        sender = os.getenv('EMAIL_SENDER')
+        receiver = os.getenv('EMAIL_RECEIVER')
+        password = os.getenv('EMAIL_PASSWORD')
+        smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+        smtp_port = int(os.getenv('SMTP_PORT', '587'))
+        
+        # 如果沒有設定 Email，就跳過
+        if not all([sender, receiver, password]):
+            print("Email 通知未設定，跳過發送")
+            return False
+        
+        try:
+            # 建立郵件
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = sender
+            msg['To'] = receiver
+            
+            # 純文字版本
+            text_part = MIMEText(body, 'plain', 'utf-8')
+            msg.attach(text_part)
+            
+            # HTML 版本（更美觀）
+            html_body = f"""
+            <html>
+              <body style="font-family: Arial, sans-serif;">
+                <h2 style="color: #ff6b6b;">⚠️ 網頁更新通知</h2>
+                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px;">
+                  <pre style="white-space: pre-wrap; word-wrap: break-word;">{body}</pre>
+                </div>
+                <hr>
+                <p style="color: #666; font-size: 12px;">
+                  這是自動發送的通知郵件，請勿直接回覆。
+                </p>
+              </body>
+            </html>
+            """
+            html_part = MIMEText(html_body, 'html', 'utf-8')
+            msg.attach(html_part)
+            
+            # 發送郵件
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()  # 啟用 TLS 加密
+                server.login(sender, password)
+                server.send_message(msg)
+            
+            print(f"✅ Email 通知已發送到 {receiver}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 發送 Email 失敗: {e}")
+            return False
+    
     def send_line_notification(self, message):
-        """發送 Line Notify 通知"""
+        """發送 Line Notify 通知（保留作為備選）"""
         token = os.getenv('LINE_NOTIFY_TOKEN')
         if not token:
-            return
+            return False
         
         url = "https://notify-api.line.me/api/notify"
         headers = {"Authorization": f"Bearer {token}"}
@@ -85,11 +144,14 @@ class WebsiteMonitor:
         try:
             response = requests.post(url, headers=headers, data=data)
             if response.status_code == 200:
-                print("Line 通知已發送")
+                print("✅ Line 通知已發送")
+                return True
             else:
-                print(f"發送 Line 通知失敗: {response.status_code}")
+                print(f"❌ 發送 Line 通知失敗: {response.status_code}")
+                return False
         except Exception as e:
-            print(f"發送 Line 通知時發生錯誤: {e}")
+            print(f"❌ 發送 Line 通知時發生錯誤: {e}")
+            return False
     
     def check_updates(self):
         """檢查網頁是否有更新"""
@@ -122,12 +184,25 @@ class WebsiteMonitor:
             self.save_hash(new_hash)
             self.save_page_content(content)
             
-            # 發送 Line 通知
-            self.send_line_notification(
-                f"\n⚠️ 課程網頁已更新！\n"
-                f"時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"網址：{self.url}"
+            # 準備通知訊息
+            notification_message = (
+                f"⚠️ 課程網頁已更新！\n\n"
+                f"📅 更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"🔗 網址：{self.url}\n"
+                f"📊 上次檢查：{last_check}\n\n"
+                f"舊哈希值: {old_hash[:16]}...\n"
+                f"新哈希值: {new_hash[:16]}..."
             )
+            
+            # 發送通知（優先 Email，備用 Line）
+            email_sent = self.send_email_notification(
+                subject="🔔 課程網頁更新通知",
+                body=notification_message
+            )
+            
+            # 如果 Email 沒設定或失敗，嘗試 Line
+            if not email_sent:
+                self.send_line_notification(notification_message)
         else:
             print("✓ 網頁沒有變更。")
             print(f"上次檢查: {last_check}")
