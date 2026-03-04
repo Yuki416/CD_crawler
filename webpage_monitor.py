@@ -16,16 +16,27 @@ class WebsiteMonitor:
         
     def login(self):
         """登入網站（需根據實際登入頁面調整）"""
+        from requests.auth import HTTPBasicAuth
+        
+        # 先嘗試不用認證訪問
         response = self.session.get(self.url)
         
-        # 如果使用 HTTP Basic Authentication
+        # 如果需要 HTTP Basic Authentication (401)
         if response.status_code == 401:
-            response = self.session.get(
-                self.url,
-                auth=(self.username, self.password)
-            )
-            return response.status_code == 200
+            print("偵測到需要 HTTP Basic Authentication，正在登入...")
+            # 設定 session 的預設認證（這樣後續的請求都會自動帶上認證）
+            self.session.auth = HTTPBasicAuth(self.username, self.password)
+            # 重新嘗試
+            response = self.session.get(self.url)
+            if response.status_code == 200:
+                print(f"✅ 登入成功！（帳號: {self.username}）")
+                return True
+            else:
+                print(f"❌ 登入失敗，狀態碼: {response.status_code}")
+                return False
         
+        # 不需要認證，直接成功
+        print("✅ 網頁不需要認證，直接訪問成功")
         return True
     
     def get_page_content(self):
@@ -173,6 +184,9 @@ class WebsiteMonitor:
         # 讀取舊的哈希值
         old_hash, last_check = self.load_previous_hash()
         
+        # 每次都保存快照（方便未來比對）
+        self.save_page_content(content)
+        
         if old_hash is None:
             print("首次檢查，儲存初始哈希值。")
             self.save_hash(new_hash)
@@ -182,7 +196,6 @@ class WebsiteMonitor:
             print(f"舊哈希值: {old_hash[:16]}...")
             print(f"新哈希值: {new_hash[:16]}...")
             self.save_hash(new_hash)
-            self.save_page_content(content)
             
             # 準備通知訊息
             notification_message = (

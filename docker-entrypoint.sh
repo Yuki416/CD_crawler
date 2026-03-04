@@ -10,14 +10,14 @@ echo "設定 cron 排程: $CRON_SCHEDULE"
 printenv | grep -E '^(WEB_|LINE_)' > /etc/environment
 
 # 建立 crontab
-echo "$CRON_SCHEDULE cd /app && python webpage_monitor.py >> /var/log/monitor.log 2>&1" | crontab -
+echo "$CRON_SCHEDULE cd /app && /usr/local/bin/python3 webpage_monitor.py >> /var/log/monitor.log 2>&1" | crontab -
 
 # 啟動 cron
 cron
 
 # 執行一次初始檢查
 echo "執行初始檢查..."
-python webpage_monitor.py
+/usr/local/bin/python3 webpage_monitor.py
 
 # 保持容器運行並顯示日誌
 echo "Cron 已啟動，等待排程執行..."
