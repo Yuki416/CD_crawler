@@ -86,11 +86,14 @@ class WebsiteMonitor:
 
         resp = self.session.post(login_url, data=post_data)
 
-        # phpBB 登入成功後會設 phpbb*_u（user ID）或 phpbb*_k（remember-me key）
+        # phpBB 登入成功後：
+        #   _u cookie 會從 '1'（匿名）變成實際 user ID（> 1）
+        #   _k cookie 在勾選「記得我」時才會有值，平常為空字串
+        # 注意：phpBB 對所有訪客都會設 _k=''，不可只靠 name.endswith('_k') 判斷
         cookies = [(c.name, c.value) for c in self.session.cookies]
         logged_in = any(
-            (name.endswith('_u') and value not in ('', '1', '0')) or
-            name.endswith('_k')
+            (name.endswith('_u') and value not in ('', '0', '1')) or
+            (name.endswith('_k') and value != '')
             for name, value in cookies
         )
         if not logged_in:
@@ -289,27 +292,63 @@ class WebsiteMonitor:
 
     def extract_forum_topics(self, html):
         """解析 phpBB forum 頁面，回傳 {主題標題: 連結} 的 dict"""
+        return {title: meta['url'] for title, meta in self.extract_forum_topics_with_meta(html).items()}
+
+    def extract_forum_topics_with_meta(self, html):
+        """解析 phpBB forum 頁面，回傳 {主題標題: {url, replies, last_datetime}} 的 dict"""
         from urllib.parse import urlparse, urljoin
         soup = BeautifulSoup(html, 'html.parser')
         parsed = urlparse(self.url)
         base = f"{parsed.scheme}://{parsed.netloc}"
 
         topics = {}
-        for a in soup.find_all('a', class_='topictitle'):
+        for li in soup.find_all('li', class_='row'):
+            a = li.find('a', class_='topictitle')
+            if not a:
+                continue
             title = a.get_text(strip=True)
             href = urljoin(base + '/forum/', a.get('href', ''))
+
+            replies = 0
+            dd_posts = li.find('dd', class_='posts')
+            if dd_posts:
+                m = re.search(r'(\d+)', dd_posts.get_text())
+                if m:
+                    replies = int(m.group(1))
+
+            last_datetime = ''
+            dd_lastpost = li.find('dd', class_='lastpost')
+            if dd_lastpost:
+                t = dd_lastpost.find('time')
+                if t:
+                    last_datetime = t.get('datetime', '')
+
             if title:
-                topics[title] = href
+                topics[title] = {
+                    'url': href,
+                    'replies': replies,
+                    'last_datetime': last_datetime,
+                }
         return topics
 
     def get_forum_topic_changes(self, old_html, new_html):
-        """比對新舊 forum 頁面，回傳 (新增主題, 消失主題) 兩個 list，每筆為 (title, url)"""
-        old_topics = self.extract_forum_topics(old_html)
-        new_topics = self.extract_forum_topics(new_html)
+        """比對新舊 forum 頁面，回傳 (新增主題, 消失主題, 有新回覆主題) 三個 list。
+        新增/消失：每筆為 (title, url)。
+        有新回覆：每筆為 (title, url, old_meta, new_meta)。"""
+        old_topics = self.extract_forum_topics_with_meta(old_html)
+        new_topics = self.extract_forum_topics_with_meta(new_html)
 
-        added   = [(t, new_topics[t]) for t in new_topics if t not in old_topics]
-        removed = [(t, old_topics[t]) for t in old_topics if t not in new_topics]
-        return added, removed
+        added   = [(t, new_topics[t]['url']) for t in new_topics if t not in old_topics]
+        removed = [(t, old_topics[t]['url']) for t in old_topics if t not in new_topics]
+        updated = []
+        for t in new_topics:
+            if t not in old_topics:
+                continue
+            old_m = old_topics[t]
+            new_m = new_topics[t]
+            if old_m['last_datetime'] != new_m['last_datetime'] or old_m['replies'] != new_m['replies']:
+                updated.append((t, new_m['url'], old_m, new_m))
+        return added, removed, updated
 
     def send_email_notification(self, subject, body):
         """發送 Email 通知"""
@@ -401,13 +440,52 @@ class WebsiteMonitor:
             print(f"❌ 發送 Line 通知時發生錯誤: {e}")
             return False
 
+    def _load_login_fail_count(self):
+        """讀取連續登入失敗次數"""
+        fail_file = f"/data/{self.data_prefix}_login_fail.json"
+        if os.path.exists(fail_file):
+            with open(fail_file, 'r') as f:
+                return json.load(f).get('consecutive_fails', 0)
+        return 0
+
+    def _save_login_fail_count(self, count):
+        """儲存連續登入失敗次數"""
+        fail_file = f"/data/{self.data_prefix}_login_fail.json"
+        os.makedirs(os.path.dirname(fail_file), exist_ok=True)
+        with open(fail_file, 'w') as f:
+            json.dump({
+                'consecutive_fails': count,
+                'last_fail': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            }, f, indent=2)
+
+    def _reset_login_fail_count(self):
+        """登入成功後重置失敗計數"""
+        fail_file = f"/data/{self.data_prefix}_login_fail.json"
+        if os.path.exists(fail_file):
+            os.remove(fail_file)
+
     def check_updates(self):
         """檢查網頁是否有更新"""
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 開始檢查網頁...")
 
         if not self.login():
             print("登入失敗！")
+            fails = self._load_login_fail_count() + 1
+            self._save_login_fail_count(fails)
+            print(f"連續登入失敗 {fails} 次。")
+            if fails >= 2:
+                self.send_email_notification(
+                    subject=f"⚠️ [{self.url}] 連續登入失敗 {fails} 次",
+                    body=(
+                        f"⚠️ 爬蟲連續登入失敗 {fails} 次！\n"
+                        f"📅 最後失敗時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"🔗 網址：{self.url}\n\n"
+                        f"請確認帳號密碼是否正確，或是否被封鎖。"
+                    ),
+                )
             return
+
+        self._reset_login_fail_count()
 
         content = self.get_page_content()
         if not content:
@@ -440,27 +518,46 @@ class WebsiteMonitor:
             )
 
             if login_type == 'phpbb':
-                # Forum 模式：比對主題標題
-                added, removed = self.get_forum_topic_changes(old_content, content) if old_content else ([], [])
+                # Forum 模式：比對主題標題與回覆數
+                new_topics_meta = self.extract_forum_topics_with_meta(content)
 
-                topic_body = ""
-                if added:
-                    topic_body += "\n【新增主題】\n"
-                    for title, url in added:
-                        topic_body += f"  ➕ {title}\n     {url}\n"
-                if removed:
-                    topic_body += "\n【消失主題】\n"
-                    for title, url in removed:
-                        topic_body += f"  ➖ {title}\n     {url}\n"
-
-                if added or removed:
-                    titles = [t for t, _ in added] + [t for t, _ in removed]
-                    print(f"主題變動：{', '.join(titles)}")
-                    subject = f"🔔 [編譯器製作論壇] 主題更新"
-                    notification_message = header + topic_body
+                # 若頁面上取不到任何主題，可能是登入失效
+                if not new_topics_meta:
+                    old_topics_meta = self.extract_forum_topics_with_meta(old_content) if old_content else {}
+                    if not old_topics_meta:
+                        # 新舊都沒有主題（例如 CSRF token 更換造成的雜訊），靜默更新 hash 不發通知
+                        print("⚠️ 頁面有更新但新舊快照均無法解析主題（可能為 CSRF token 變動），略過通知。")
+                        return
+                    subject = f"⚠️ [編譯器製作論壇] 無法取得主題列表（登入可能已失效）"
+                    notification_message = header + "\n⚠️ 無法從頁面取得主題列表，請確認登入狀態是否正常。\n"
                 else:
-                    subject = f"🔔 [編譯器製作論壇] 頁面更新通知"
-                    notification_message = header
+                    added, removed, updated = self.get_forum_topic_changes(old_content, content) if old_content else ([], [], [])
+
+                    topic_body = ""
+                    if added:
+                        topic_body += "\n【新增主題】\n"
+                        for title, url in added:
+                            topic_body += f"  ➕ {title}\n     {url}\n"
+                    if removed:
+                        topic_body += "\n【消失主題】\n"
+                        for title, url in removed:
+                            topic_body += f"  ➖ {title}\n"
+                    if updated:
+                        topic_body += "\n【有新回覆的主題】\n"
+                        for title, url, old_m, new_m in updated:
+                            reply_diff = ""
+                            if old_m['replies'] != new_m['replies']:
+                                reply_diff = f"（回覆數：{old_m['replies']} → {new_m['replies']}）"
+                            topic_body += f"  🔄 {title}{reply_diff}\n     {url}\n"
+
+                    if added or removed or updated:
+                        titles = [t for t, _ in added] + [t for t, _ in removed] + [t for t, _, _, _ in updated]
+                        print(f"主題變動：{', '.join(titles)}")
+                        subject = f"🔔 [編譯器製作論壇] 主題更新"
+                        notification_message = header + topic_body
+                    else:
+                        subject = f"🔔 [編譯器製作論壇] 頁面更新通知"
+                        notification_message = header + "\n（頁面有更新但主題列表無明顯變動）\n"
             else:
                 # 課程頁面模式：比對課程區段
                 changes = self.get_changed_sections(old_content, content) if old_content else []
