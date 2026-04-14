@@ -84,6 +84,11 @@ class WebsiteMonitor:
             'sid': hidden('sid'),
         }
 
+        # phpBB 的 form_token_mintime 要求 GET 取得表單後至少等幾秒才能 POST，
+        # 否則會回傳「表單送出無效」(CSRF 驗證失敗)
+        import time
+        time.sleep(5)
+
         resp = self.session.post(login_url, data=post_data)
 
         # phpBB 登入成功後：
